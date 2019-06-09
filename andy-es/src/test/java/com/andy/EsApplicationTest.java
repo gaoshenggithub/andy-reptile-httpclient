@@ -2,19 +2,32 @@ package com.andy;
 
 import com.andy.model.People;
 import com.andy.model.mapper.PeopleRepository;
+import com.sun.org.apache.bcel.internal.classfile.SourceFile;
 import org.apache.lucene.util.QueryBuilder;
+import org.elasticsearch.index.query.MatchQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.bucket.terms.LongTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
+import org.elasticsearch.search.aggregations.metrics.avg.InternalAvg;
+import org.elasticsearch.search.sort.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.core.ElasticsearchTemplate;
+import org.springframework.data.elasticsearch.core.aggregation.AggregatedPage;
+import org.springframework.data.elasticsearch.core.query.FetchSourceFilter;
+import org.springframework.data.elasticsearch.core.query.NativeSearchQueryBuilder;
 import org.springframework.data.elasticsearch.repository.ElasticsearchRepository;
 import org.springframework.test.context.junit4.SpringRunner;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
@@ -145,7 +158,142 @@ public class EsApplicationTest {
      */
     @Test
     public void test8() {
-        QueryBuilders.
+        MatchQueryBuilder query = QueryBuilders.matchQuery("lastName", "听南");
+        repository.search(query).forEach(System.out::println);
     }
 
+
+    /**
+     * 自定义查询
+     */
+
+    @Test
+    public void test9() {//term ===>词条查询
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.termQuery("lastName", "凌寒"));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+        System.out.println(page.getTotalPages());
+    }
+
+    @Test
+    public void test10() {//match===>匹配查询
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.matchQuery("context", "庄园"));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test11() {//bool===>布尔查询
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.boolQuery().must(QueryBuilders.matchQuery("context", "庄园")));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test12() {//fuzzy===>容错查询（最多错两个）
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.fuzzyQuery("lastName", "凌"));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test13() {// ? 表示询问一个未知的占位符，* 表示询问0到n个任意占位符 模糊匹配
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.wildcardQuery("lastName", "*寒"));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test14() { //分页查询 PageRequest
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.matchAllQuery());
+        builder.withPageable(PageRequest.of(0, 10, Sort.Direction.ASC, "id"));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test15() {//排序查询（使查询结果按指定字段排序，基于模糊查询）
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.wildcardQuery("lastName", "*寒"));
+        builder.withPageable(PageRequest.of(0, 10));
+        builder.withSort(SortBuilders.fieldSort("id").order(SortOrder.ASC));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test16() {//组合模糊查询，分页，排序
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        builder.withQuery(QueryBuilders.wildcardQuery("lastName", "*寒"));
+        builder.withPageable(PageRequest.of(0, 10));
+        builder.withSort(SortBuilders.fieldSort("id").order(SortOrder.ASC));
+        Page<People> page = repository.search(builder.build());
+        page.forEach(System.out::println);
+        System.out.println(page.getTotalElements());
+    }
+
+    @Test
+    public void test17() {
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        //不查询结果
+        builder.withSourceFilter(new FetchSourceFilter(new String[]{""}, null));
+
+        //添加聚合
+        builder.addAggregation(AggregationBuilders.terms("lastNames").field("lastName"));
+
+        //查询,需要把结果强转为AggregatedPage类型
+        AggregatedPage<People> aPage = (AggregatedPage<People>) repository.search(builder.build());
+
+        //解析
+        //从结果中取出名为lastNames的那个聚合，
+        // 因为是利用String类型字段来进行的term聚合，所以结果要强转为StringTerms类型(LongTerms...)
+        StringTerms lastNames = (StringTerms) aPage.getAggregation("lastNames");
+
+        //获取桶
+        List<StringTerms.Bucket> list = lastNames.getBuckets();
+        list.forEach(e -> {
+            System.out.println("e.getKey() = " + e.getKey());
+            System.out.println("e.getKeyAsString() = " + e.getKeyAsString());
+            System.out.println("e.getDocCount() = " + e.getDocCount());
+            System.err.println("------------------");
+        });
+    }
+
+    @Test
+    public void test18() {//嵌套聚合，求平均值
+        NativeSearchQueryBuilder builder = new NativeSearchQueryBuilder();
+        //不查询结果
+        builder.withSourceFilter(new FetchSourceFilter(new String[]{""}, null));
+        //添加聚合
+        builder.addAggregation(AggregationBuilders
+                .terms("lastNames")
+                .field("lastName")
+                /*.subAggregation(AggregationBuilders.avg("ids").field("id"))*/);
+
+        //将查询结果强制转换为
+        AggregatedPage<People> aPage = (AggregatedPage<People>) repository.search(builder.build());
+
+        StringTerms lastNames = (StringTerms) aPage.getAggregation("lastNames");
+
+        List<StringTerms.Bucket> list = lastNames.getBuckets();
+
+        list.forEach(e -> {
+            InternalAvg avg = (InternalAvg) e.getAggregations().asMap().get("ids");
+            double value = avg.getValue();
+        });
+
+    }
 }
