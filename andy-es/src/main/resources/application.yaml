@@ -1,0 +1,5 @@
+spring:
+  data:
+    elasticsearch:
+      cluster-name: bigdata #节点名称
+      cluster-nodes: 47.105.177.77:9300 #节点名
